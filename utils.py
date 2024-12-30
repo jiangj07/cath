@@ -1,6 +1,8 @@
-
 import torch
 import math
+import os
+import torch.distributed as dist
+from collections import OrderedDict
 
 class WarmupCosineSchedule(object):
 
@@ -98,6 +100,7 @@ def pretrain_optimizer(encoder, predictor, betas, epsilon, zero_init_bias_wd):
 
 def save_checkpoint(rank, encoder, predictor, optimizer, scaler, target_encoder, epoch, batch_size, world_size, lr, path):
     if rank != 0:
+        print("Returning from checkpoint")
         return
     save_dict = {
         'encoder': encoder.state_dict(),
@@ -135,18 +138,38 @@ def load_checkpoint(
     predictor,
     target_encoder,
     opt,
-    scaler):
-    checkpoint = torch.load(r_path, map_location=torch.device('cpu'))
+    scaler,
+    device):
+    
+    checkpoint = torch.load(r_path, map_location=torch.device(device))  # Load the checkpoint (adjust map_location as needed)
+    print("checkpoint", checkpoint)
+    # Adjust the state_dict keys by removing the 'module.' prefix
+    # state_dict = checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint
+    # print("state_dict", state_dict)
+    # new_state_dict = {key.replace("module.", ""): value for key, value in state_dict.items()}
+    # checkpoint1 = new_state_dict
+    # print("checkpoint1", checkpoint1)
+
     epoch = checkpoint['epoch']
 
     # -- loading encoder
     pretrained_dict = checkpoint['encoder']
-    msg = encoder.load_state_dict(pretrained_dict)
+    new_state_dict = {}
+    for k, v in pretrained_dict.items():
+        name = k[7:] # remove 'module.' of dataparallel
+        new_state_dict[name]=v
+    # print("Examine pretrained_dict", pretrained_dict)
+    # print("Examine new_dict", new_state_dict)
+    msg = encoder.load_state_dict(new_state_dict)
     #logger.info(f'loaded pretrained encoder from epoch {epoch} with msg: {msg}')
 
     # -- loading predictor
     pretrained_dict = checkpoint['predictor']
-    msg = predictor.load_state_dict(pretrained_dict)
+    new_state_dict = {}
+    for k, v in pretrained_dict.items():
+        name = k[7:] # remove 'module.' of dataparallel
+        new_state_dict[name]=v
+    msg = predictor.load_state_dict(new_state_dict)
 
     # -- loading optimizer
     opt.load_state_dict(checkpoint['opt'])
@@ -157,7 +180,11 @@ def load_checkpoint(
     if target_encoder is not None:
         print(list(checkpoint.keys()))
         pretrained_dict = checkpoint['target_encoder']
-        msg = target_encoder.load_state_dict(pretrained_dict)
+        new_state_dict = {}
+        for k, v in pretrained_dict.items():
+            name = k[7:] # remove 'module.' of dataparallel
+            new_state_dict[name]=v
+        msg = target_encoder.load_state_dict(new_state_dict)
     
     return (
         encoder,
@@ -167,3 +194,49 @@ def load_checkpoint(
         scaler,
         epoch,
     )
+
+def load_checkpoint_finetune(checkpoint_path, classifier, opt, scaler):
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint file {checkpoint_path} not found.")
+
+    print(f"Loading checkpoint from {checkpoint_path}...")
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+
+    # Restore classifier
+    classifier.load_state_dict(checkpoint['classifier'])
+    print("Classifier state restored.")
+
+    # Restore optimizer
+    opt.load_state_dict(checkpoint['opt'])
+    print("Optimizer state restored.")
+
+    # Restore scaler (if applicable)
+    scaler = None
+    if 'scaler' in checkpoint and checkpoint['scaler'] is not None:
+        scaler = torch.cuda.amp.GradScaler()
+        scaler.load_state_dict(checkpoint['scaler'])
+        print("Scaler state restored.")
+
+    # Restore other training states
+    epoch = checkpoint.get('epoch', 0)
+    batch_size = checkpoint.get('batch_size', None)
+    world_size = checkpoint.get('world_size', None)
+    lr = checkpoint.get('lr', None)
+
+    print(f"Checkpoint restored: epoch {epoch}, batch_size {batch_size}, "
+          f"world_size {world_size}, lr {lr}")
+
+    return (
+        classifier,
+        opt,
+        scaler,
+        epoch,
+        batch_size,
+        world_size,
+        lr,
+    )
+
+def ddp_setup_original(rank, world_size):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12346"
+    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
