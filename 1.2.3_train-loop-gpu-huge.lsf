@@ -1,0 +1,37 @@
+#BSUB -J train_loop_GPU
+#BSUB -P acc_EHR_ML 
+#BSUB -q private
+#BSUB -R span[hosts=1]
+#BSUB -n 3
+#BSUB -R affinity[core(16)]
+#BSUB -W 87:00
+#BSUB -R rusage[mem=200000]
+#BSUB -gpu num=3
+#BSUB -R h100nvl
+#BSUB -oo /sc/arion/projects/ECHO_ML/gulamf01/multimodal_LLM/src/1_pretrain-model/1.2.3_train-loop-gpu-huge/logs/%J.stdout 
+#BSUB -eo /sc/arion/projects/ECHO_ML/gulamf01/multimodal_LLM/src/1_pretrain-model/1.2.3_train-loop-gpu-huge/logs/%J.stderr 
+#BSUB -L /bin/bash 
+
+ml purge
+module load anaconda3/2024.06
+# ml cuda/12.1.1
+source activate vjepa
+export PATH=$PATH:$PYTHONPATH
+export PATH=$PATH:/sc/arion/work/gulamf01/vjepa/envs/vjepa/bin
+# export TORCH_DISTRIBUTED_DEBUG=DETAIL
+
+#echo $PATH
+#echo $PYTHONPATH
+
+# pip3 install pydicom
+
+
+# Run script
+# export CUDA_VISIBLE_DEVICES=0,1,6
+# # export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True 
+cd /sc/arion/projects/ECHO_ML/gulamf01/multimodal_LLM/src/1_pretrain-model/1.2.3_train-loop-gpu-huge
+
+# Run test dataloaders. 
+# torchrun --standalone --nproc_per_node=3 train-loop-gpu-huge.py --config_path /sc/arion/projects/ECHO_ML/gulamf01/multimodal_LLM/src/1_pretrain-model/1.2.3_train-loop-gpu-huge/config.yaml
+# torchrun --standalone --nproc_per_node=3 train-loop-gpu-torchload.py --config_path /sc/arion/projects/ECHO_ML/gulamf01/multimodal_LLM/src/1_pretrain-model/1.2.3_train-loop-gpu-huge/config.yaml
+python train-loop-gpu-huge.py --config_path /sc/arion/projects/ECHO_ML/gulamf01/multimodal_LLM/src/1_pretrain-model/1.2.3_train-loop-gpu-huge/config.yaml
